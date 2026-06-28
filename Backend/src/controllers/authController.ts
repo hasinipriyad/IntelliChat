@@ -113,9 +113,12 @@ export async function loginUserController(req: Request, res: Response) {
     // Set the refresh token in an HTTP-only cookie
     res.cookie("refreshToken", refreshToken, cookieOptions(7 * 24 * 60 * 60 * 1000));
 
-    // If login is successful, return user data
+    // If login is successful, return user data + tokens in body
+    // (tokens also set as cookies for browsers that support cross-origin cookies)
     return res.status(200).json({
       message: "Login successful.",
+      accessToken,
+      refreshToken,
       user: {
         id: user._id,
         username: user.username,
@@ -134,7 +137,8 @@ export async function loginUserController(req: Request, res: Response) {
  * @access Public
  */
 export async function refreshTokenController(req: Request, res: Response) {
-  const refreshToken = req.cookies.refreshToken;
+  // Accept refresh token from body (mobile/Safari) or cookie fallback
+  const refreshToken = req.body?.refreshToken ?? req.cookies.refreshToken;
 
   if (!refreshToken) {
     return res.status(401).json({ message: "Refresh token not found." });
@@ -169,10 +173,11 @@ export async function refreshTokenController(req: Request, res: Response) {
       { expiresIn: "15m" },
     );
 
-    // Set the new access token in an HTTP-only cookie
+    // Set cookie for browsers that support it
     res.cookie("accessToken", newAccessToken, cookieOptions(15 * 60 * 1000));
 
-    return res.status(200).json({ message: "Access token refreshed." });
+    // Also return in body for mobile/Safari
+    return res.status(200).json({ message: "Access token refreshed.", accessToken: newAccessToken });
   } catch (error) {
     console.error("Refresh token error:", error);
     res.status(401).json({ message: "Invalid or expired refresh token." });
@@ -213,7 +218,7 @@ export async function getMeController(req: AuthRequest, res: Response) {
  */
 export async function logoutUserController(req: Request, res: Response) {
   try {
-    const token = req.cookies.refreshToken;
+    const token = req.body?.refreshToken ?? req.cookies.refreshToken;
 
     if (!token) {
       return res.status(400).json({ message: "Refresh token not found." });

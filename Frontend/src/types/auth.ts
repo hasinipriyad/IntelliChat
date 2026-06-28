@@ -22,6 +22,8 @@ export interface LoginPayload {
 export interface AuthResponse {
   message: string;
   user: User;
+  accessToken?: string;
+  refreshToken?: string;
 }
 
 // Shape of the GET /auth/get-me response

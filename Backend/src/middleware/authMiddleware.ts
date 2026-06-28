@@ -10,7 +10,11 @@ export async function authMiddleware(
   res: Response,
   next: NextFunction,
 ) {
-  const token = req.cookies.accessToken;
+  // Accept token from Authorization header (Bearer) or cookie fallback
+  const authHeader = req.headers.authorization;
+  const token =
+    authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : req.cookies.accessToken;
+
   if (!token) {
     return res.status(401).json({ message: "No token provided." });
   }

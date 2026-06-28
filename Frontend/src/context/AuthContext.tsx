@@ -10,7 +10,13 @@ import {
   registerUser,
   logoutUser,
   getMe,
+  refreshToken,
 } from "../api/authService";
+import {
+  setAccessToken,
+  setRefreshToken,
+  getRefreshToken,
+} from "../api/axios";
 import type { User, LoginPayload, RegisterPayload } from "../types/auth";
 
 interface AuthContextType {
@@ -28,14 +34,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // On app mount, try to restore the session from the cookie.
+  // On app mount, try to restore session using a stored refresh token.
   useEffect(() => {
     async function restoreSession() {
+      const storedRefreshToken = getRefreshToken();
+
+      if (!storedRefreshToken) {
+        setLoading(false);
+        return;
+      }
+
       try {
+        // Exchange the stored refresh token for a new access token
+        const { accessToken: newAccessToken } = await refreshToken(storedRefreshToken);
+        setAccessToken(newAccessToken);
+
+        // Now fetch the user
         const { user } = await getMe();
         setUser(user);
       } catch {
-        // No valid session (401 after refresh attempt) — stay logged out.
+        // Refresh token expired or revoked — clear everything
+        setAccessToken(null);
+        setRefreshToken(null);
         setUser(null);
       } finally {
         setLoading(false);
@@ -45,12 +65,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   async function login(payload: LoginPayload) {
-    const { user } = await loginUser(payload);
+    const { user, accessToken, refreshToken: newRefreshToken } = await loginUser(payload);
+    // Store tokens
+    if (accessToken) setAccessToken(accessToken);
+    if (newRefreshToken) setRefreshToken(newRefreshToken);
     setUser(user);
   }
 
   async function register(payload: RegisterPayload) {
-    // We redirect to login after register, so we don't set the user here.
+    // Redirect to login after register — no token needed here
     await registerUser(payload);
   }
 
@@ -58,7 +81,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       await logoutUser();
     } finally {
-      // Clear local state even if the network call fails.
+      setAccessToken(null);
+      setRefreshToken(null);
       setUser(null);
     }
   }

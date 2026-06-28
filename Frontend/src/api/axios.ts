@@ -2,22 +2,52 @@ import axios from "axios";
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL,
-  withCredentials: true,
+  withCredentials: true, // still send cookies where supported
 });
 
-// Track whether a refresh is already in flight, so concurrent 401s
-// don't fire multiple refresh calls.
+// ── In-memory token store ─────────────────────────────────────────────────────
+// Access token lives only in memory (never localStorage) — safe from XSS.
+// Refresh token goes in localStorage so it survives page reloads on mobile.
+
+let accessToken: string | null = null;
+
+export function setAccessToken(token: string | null) {
+  accessToken = token;
+}
+
+export function getAccessToken() {
+  return accessToken;
+}
+
+export function setRefreshToken(token: string | null) {
+  if (token) {
+    localStorage.setItem("refreshToken", token);
+  } else {
+    localStorage.removeItem("refreshToken");
+  }
+}
+
+export function getRefreshToken() {
+  return localStorage.getItem("refreshToken");
+}
+
+// ── Request interceptor — attach Bearer token ─────────────────────────────────
+api.interceptors.request.use((config) => {
+  if (accessToken) {
+    config.headers.Authorization = `Bearer ${accessToken}`;
+  }
+  return config;
+});
+
+// ── Response interceptor — refresh on 401 ────────────────────────────────────
 let isRefreshing = false;
 type QueueEntry = { resolve: (value: unknown) => void; reject: (reason: unknown) => void };
 let queue: QueueEntry[] = [];
 
 function flushQueue(error: unknown) {
   queue.forEach(({ resolve, reject }) => {
-    if (error) {
-      reject(error);
-    } else {
-      resolve(undefined);
-    }
+    if (error) reject(error);
+    else resolve(undefined);
   });
   queue = [];
 }
@@ -27,9 +57,7 @@ api.interceptors.response.use(
   async (error) => {
     const originalRequest = error.config;
 
-    // Only try to refresh on a 401, and only once per request.
     if (error.response?.status === 401 && !originalRequest._retry) {
-      // Don't try to refresh the refresh endpoint itself, or login.
       if (
         originalRequest.url?.includes("/refresh-token") ||
         originalRequest.url?.includes("/login")
@@ -40,7 +68,6 @@ api.interceptors.response.use(
       originalRequest._retry = true;
 
       if (isRefreshing) {
-        // Wait for the in-flight refresh to finish, then retry.
         return new Promise((resolve, reject) => {
           queue.push({
             resolve: () => resolve(api(originalRequest)),
@@ -52,11 +79,18 @@ api.interceptors.response.use(
       isRefreshing = true;
 
       try {
-        await api.post("/auth/refresh-token");
+        const storedRefreshToken = getRefreshToken();
+        const { data } = await api.post("/auth/refresh-token", {
+          refreshToken: storedRefreshToken,
+        });
+
+        setAccessToken(data.accessToken);
         isRefreshing = false;
         flushQueue(null);
         return api(originalRequest);
       } catch (refreshError) {
+        setAccessToken(null);
+        setRefreshToken(null);
         isRefreshing = false;
         flushQueue(refreshError);
         return Promise.reject(refreshError);
