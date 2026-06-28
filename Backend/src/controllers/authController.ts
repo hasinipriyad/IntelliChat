@@ -3,6 +3,19 @@ import User from "../models/userModel.js";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 
+const isProd = process.env.NODE_ENV === "production";
+
+// sameSite must be "none" in production so cookies are sent cross-origin
+// (Vercel frontend → Render backend). "none" requires secure: true.
+function cookieOptions(maxAge: number) {
+  return {
+    httpOnly: true,
+    secure: isProd,
+    sameSite: (isProd ? "none" : "strict") as "none" | "strict",
+    maxAge,
+  };
+}
+
 interface AuthRequest extends Request {
   userId?: string;
 }
@@ -95,20 +108,10 @@ export async function loginUserController(req: Request, res: Response) {
     await user.save();
 
     //Set the access token in a HTTP-only cookie
-    res.cookie("accessToken", accessToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
-      maxAge: 15 * 60 * 1000, // 15 minutes
-    });
+    res.cookie("accessToken", accessToken, cookieOptions(15 * 60 * 1000));
 
     // Set the refresh token in an HTTP-only cookie
-    res.cookie("refreshToken", refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production", // Use secure cookies in production
-      sameSite: "strict",
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-    });
+    res.cookie("refreshToken", refreshToken, cookieOptions(7 * 24 * 60 * 60 * 1000));
 
     // If login is successful, return user data
     return res.status(200).json({
@@ -167,12 +170,7 @@ export async function refreshTokenController(req: Request, res: Response) {
     );
 
     // Set the new access token in an HTTP-only cookie
-    res.cookie("accessToken", newAccessToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
-      maxAge: 15 * 60 * 1000, // 15 minutes
-    });
+    res.cookie("accessToken", newAccessToken, cookieOptions(15 * 60 * 1000));
 
     return res.status(200).json({ message: "Access token refreshed." });
   } catch (error) {
@@ -215,12 +213,6 @@ export async function getMeController(req: AuthRequest, res: Response) {
  */
 export async function logoutUserController(req: Request, res: Response) {
   try {
-    const cookieOptions = {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict" as const,
-    };
-
     const token = req.cookies.refreshToken;
 
     if (!token) {
@@ -232,8 +224,9 @@ export async function logoutUserController(req: Request, res: Response) {
       { refreshToken: null },
     );
 
-    res.clearCookie("accessToken", cookieOptions);
-    res.clearCookie("refreshToken", cookieOptions);
+    const clearOptions = cookieOptions(0);
+    res.clearCookie("accessToken", clearOptions);
+    res.clearCookie("refreshToken", clearOptions);
 
     return res.status(200).json({ message: "Logged out." });
   } catch (error) {
